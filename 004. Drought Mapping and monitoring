@@ -1,0 +1,217 @@
+//                                                  
+// Code: Drought Monitoring For Burundi - Provinces
+// Written by: James Waichoka-Geo-Environmental Planner and Analyst
+// Objective:  Drought Monitoring for Burundi PADANE SNV Project
+
+//=====================================================================================================================
+
+/////////////////////////////////////////////////////////////////////////////////////
+//step 1: We can choose the specific province that we want to carry out our analysis:
+////////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////
+////Enter the province name here:001. Gitega 2024////////
+////////////////////////////////////////////////////////
+
+// 1: Import the Feature Collection with all the provinces
+var provinces = ee.FeatureCollection("projects/ee-omayojames7/assets/Burundi_Admin_1_Provinces");
+
+// 2: Filter the Feature Collection by 'admin1Name'
+var ROI = provinces.filter(ee.Filter.eq('admin1Name', 'Gitega'));
+
+// 3: Add the selected province to the map
+Map.centerObject(ROI, 10);
+Map.addLayer(ROI,{}, 'Gitega Province');
+
+// 4: Print the selected province to the console
+print('selected province :', ROI);
+
+//////////////////////////////////////////////////////
+//step 2: Define Time/period
+var time_start = '2001', time_end = '2024';
+
+//step 3: select the required indices in drought analysis i.e. NDVI
+var ndvi= imageCollection.select('NDVI')
+.filterDate(time_start, time_end);
+
+//step 4: select the second parameter in drought analysis. i.e. LST
+var temp= imageCollection2.select('LST_Day_1km')
+.filterDate(time_start, time_end);
+//step 5: Calculating VCI is very key and essential as shown below:
+// vci: vegetation condition index
+// ndvi, ndvi_min, ndvi_max
+// vci = (ndvi - ndvi_min)/(ndvi_max - ndvi_min)
+
+//step 5: calculate the max and min for ndvi
+var ndvi_min = ndvi.min().multiply(0.0001)
+var ndvi_max = ndvi.max().multiply(0.0001)
+
+//step 6: temporal function to convert data into monthly format
+
+function temporal_collection(collection, start, count, interval, unit){
+  var seq = ee.List.sequence(0, ee.Number(count).subtract(1));
+  var origin_date = ee.Date(start);
+  return ee.ImageCollection(seq.map(function(i){
+    var start_date = origin_date.advance(ee.Number(interval).multiply(i), unit);
+    var end_date = origin_date.advance(ee.Number(interval).multiply(ee.Number(i).add(1)), unit);
+    return collection.filterDate(start_date, end_date).mean()
+    .set('system:time_start', start_date.millis())
+    .set('system:time_end', end_date.millis())
+    }))
+  }
+  
+//step 7: get monthly ndvi image collection
+
+var ndvi_monthly = temporal_collection(ndvi, time_start, 276, 1, 'month');
+
+//step 8: calculate vci
+
+var vci = ndvi_monthly.map(function(img){
+  var index = img.expression('(ndvi - min) / (max - min)',
+  {'ndvi': img.select('NDVI').multiply(0.0001), 'min': ndvi_min, 'max': ndvi_max})
+  return index.rename('VCI')
+  .copyProperties(img, img.propertyNames())
+  });
+  
+//step 9: Map the tci indices
+// tci: thermal condition index
+// lst_max, lst_min
+// tci = (max - lst) / (max  - min)
+
+var temp_max = temp.max().multiply(0.02);
+var temp_min = temp.min().multiply(0.02);
+
+var temp_monthly = temporal_collection(temp, time_start, 276, 1, 'month');
+
+var tci = temp_monthly.map(function(img){
+  var index = img.expression('(max - lst)/(max - min)',
+  {'max': temp_max, 'min': temp_min, 'lst': img.multiply(0.02)})
+  return index.rename('TCI')
+  .copyProperties(img,img.propertyNames())
+  }) ;
+  
+
+var modis_indices = vci.combine(tci);
+
+//step 10: Map the vhi
+// vhi: vegetation health index
+// vci = 0.5 * vci + (1 - 0.5) * tci
+
+
+var drought = modis_indices.map(function(img){
+  var vhi = img.expression('0.5 * vci + (1 - 0.5) * tci',{
+    'vci': img.select('VCI'), 'tci': img.select('TCI')
+    }).rename('VHI')
+  return img.addBands(vhi)
+  .copyProperties(img, img.propertyNames())
+  });
+  
+
+print(
+  ui.Chart.image.series(drought, ROI, ee.Reducer.mean(),
+  1000, 'system:time_start')
+  )
+  
+print(
+  ui.Chart.image.series(drought.select('VCI','TCI'), ROI, ee.Reducer.mean(),
+  1000, 'system:time_start')
+  )
+
+print(
+  ui.Chart.image.series(drought.select('VHI'), ROI, ee.Reducer.mean(),
+  1000, 'system:time_start')
+  )
+
+/////////////////////////////////////////////////////
+// Add the NDVI, VCI, TCI, and VHI images to the map
+////////////////////////////////////////////////////
+
+// Selecting a specific date from the image collection for visualization
+var specificDate = '2023-01-01'; // Change this to your desired date
+
+// Selecting the image from the collection closest to the specific date
+var selectedImage = drought.filterDate(specificDate).first();
+
+// Adding the image to the map
+Map.addLayer(selectedImage.clip(ROI), {bands: ['VHI'], min: -1, max: 1, palette: ['red', 'yellow', 'green']}, 'VHI Image');
+
+// Visualizing other indices (VCI and TCI) separately
+var vciImage = selectedImage.select('VCI');
+var tciImage = selectedImage.select('TCI');
+
+// Adding VCI image to the map
+Map.addLayer(vciImage.clip(ROI), {min: 0, max: 1, palette: ['brown', 'green']}, 'VCI Image');
+
+// Adding TCI image to the map
+Map.addLayer(tciImage.clip(ROI), {min: 0, max: 1, palette: ['blue', 'white']}, 'TCI Image');
+
+/////////////////////////
+//Export the images/////
+///////////////////////
+
+// //First Image: VHI for 2006-2011 and 2018 to 2023
+// Export.image.toDrive({
+//   image: drought.filterDate('2006','2011').select('VHI').toBands(), 
+//   description: 'Gitega_drought_vhi_2006-2011',
+//   scale: 1000, 
+//   crs: 'EPSG:4326', 
+//   maxPixels: 1e13, 
+//   region: geometry
+//   })
+  
+// Export.image.toDrive({
+//   image: drought.filterDate('2018','2023').select('VHI').toBands(), 
+//   description: 'Gitega_drought_vhi_2018-2023',
+//   scale: 1000, 
+//   crs: 'EPSG:4326', 
+//   maxPixels: 1e13, 
+//   region: geometry
+//   })
+  
+//   //Second is TCI and VCI for 2006-2011 and 2018 to 2023
+  
+//   //////////////////
+//   ////For TCI//////
+//   ////////////////
+  
+// Export.image.toDrive({
+//   image: drought.filterDate('2006','2011').select('TCI').toBands(), 
+//   description: 'Gitega_drought_TCI_2006-2011',
+//   scale: 1000, 
+//   crs: 'EPSG:4326', 
+//   maxPixels: 1e13, 
+//   region: geometry
+//   })
+  
+// Export.image.toDrive({
+//   image: drought.filterDate('2018','2023').select('TCI').toBands(), 
+//   description: 'Gitega_drought_TCI_2018-2023',
+//   scale: 1000, 
+//   crs: 'EPSG:4326', 
+//   maxPixels: 1e13, 
+//   region: geometry
+//   }) 
+  
+
+
+////////////////
+////For VCI////
+//////////////
+Export.image.toDrive({
+  image: drought.filterDate('2006','2011').select('VCI').toBands(), 
+  description: 'Gitega_drought_VCI_2006-2011',
+  scale: 1000, 
+  crs: 'EPSG:4326', 
+  maxPixels: 1e13, 
+  region: ROI
+  }) 
+  
+Export.image.toDrive({
+  image: drought.filterDate('2018','2023').select('VCI').toBands(), 
+  description: 'Gitega_Burundi_drought_VCI_2018-2023',
+  scale: 1000, 
+  crs: 'EPSG:4326', 
+  maxPixels: 1e13, 
+  region: ROI
+  }) 
+    
