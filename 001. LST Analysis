@@ -1,0 +1,150 @@
+//step 1: Importing area of interest to the script
+var Burundi = ROI;
+print(Burundi);
+
+//step 2: Add the area of interest to the map canvas
+Map.centerObject(Burundi, 6);
+Map.addLayer(Burundi);
+
+//step 3: Import satellite image for deducing the LST 
+var modis = ee.ImageCollection('MODIS/MOD11A2');
+
+//step 4: Define a date range of interest; here, a start date is defined and the end
+// date is determined by advancing 1 year from the start date.
+var start = ee.Date('2016-01-01');
+var end = ee.Date('2024-12-31')
+var dateRange = ee.DateRange(start, start.advance(8, 'year'));
+
+//step 5: Filter the LST collection to include only images intersecting the desired
+// date range.
+var mod11a2 = modis.filterDate(dateRange);
+
+//step 6: Select only the 1km day LST data band.
+var modLSTday = mod11a2.select('LST_Day_1km');
+
+//step 7: Scale to Kelvin and convert to Celsius, set image acquisition time.
+var modLSTc = modLSTday.map(function(img) {
+  return img
+    .multiply(0.02)
+    .subtract(273.15)
+    .copyProperties(img, ['system:time_start']);
+});
+
+//step 8: Chart time series of LST for Kasigau in 2020.
+var ts1 = ui.Chart.image.series({
+  imageCollection: modLSTc,
+  region: Burundi,
+  reducer: ee.Reducer.mean(),
+  scale: 1000,
+  xProperty: 'system:time_start'})
+  .setOptions({
+     title: 'Burundi_LST',
+     vAxis: {title: 'LST Celsius'}});
+print(ts1);
+
+//step 9: Calculate 8-day mean temperature for Burundi in a date desired for the study
+var clippedLSTc = modLSTc.mean().clip(Burundi);
+
+//step 10: Add clipped image layer to the map.
+Map.addLayer(clippedLSTc, {
+  min: 20, max: 40,
+  palette: ['blue', 'limegreen', 'yellow', 'darkorange', 'red']},
+  'Mean temperature, 2022');
+//step 11: add legend
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+ 
+//step 12: Create legend title
+var legendTitle = ui.Label({
+  value: 'Legend',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '18px',
+    margin: '0 0 4px 0',
+    padding: '0'
+    }
+});
+ 
+//step 13:Add the title to the panel
+legend.add(legendTitle);
+ 
+//step 14: Creates and styles 1 row of the legend.
+var makeRow = function(color, name) {
+ 
+      // step 15: Create the label that is actually the colored box.
+      var colorBox = ui.Label({
+        style: {
+          backgroundColor: color,
+          // Use padding to give the box height and width.
+          padding: '12px',
+          margin: '0 0 6px 0'
+        }
+      });
+ 
+      //step 16: Create the label filled with the description text.
+      var description = ui.Label({
+        value: name,
+        style: {margin: '0 0 4px 6px'}
+      });
+ 
+      //step 17: return the panel
+      return ui.Panel({
+        widgets: [colorBox, description],
+        layout: ui.Panel.Layout.Flow('horizontal')
+      });
+};
+ 
+// step 18: Palette with the colors
+var palette =['Red','Yellow', 'Blue','limegreen','darkorange'];
+ 
+//step 19: name of the legend
+var names = ['High','Moderate','Low'];
+ 
+//step 20: Add color and and names
+for (var i = 0; i <3; i++) {
+  legend.add(makeRow(palette[i], names[i]));
+  }  
+ 
+//step 21: add legend to map (alternatively you can also print the legend to the console)
+Map.add(legend);
+
+//step 22: set position of panel
+var title = ui.Panel({
+  style: {
+    position: 'top-center',
+    padding: '8px 15px'
+  }
+});
+ 
+//step 23: Create legend title
+var mapTitle = ui.Label({
+  value: 'Burundi_Provinces_LST',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '18px',
+    margin: '0 0 4px 0',
+    padding: '0'
+    }
+});
+ 
+//step 24: Add the title to the panel
+title.add(mapTitle);
+Map.add(title);
+
+
+
+// //step 25: Export the image to your Google Drive account.
+// Export.image.toDrive({
+//   image: clippedLSTc,
+//   description: 'LST_Celsius_Burundi',
+//   folder: 'my_folder',
+//   region:Burundi,
+//   scale: 1000,
+//   crs: 'EPSG:4326',
+//   maxPixels: 1e10});
+  
+  
