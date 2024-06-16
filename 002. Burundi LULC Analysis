@@ -1,0 +1,111 @@
+
+
+///////////////////////////////////////////////////
+////////LULC Mapping//////////////////////////////
+/////////////////////////////////////////////////
+
+//LULC for Burundi - provinces :1994-2004, 2004-2014, 2014-2024 (1993-2003, 2003- 2013, 2013 - 2023)
+// Test Classes; 1. Forestland , 2. Shrubland, 3. Grassland, 4. Cropland, 5. Wetland, 6. Waterbodies, 7. Built_up, 8. Barren_land
+
+///////////////////////
+////**2023 LULC**////
+/////////////////////
+
+//=====================================================================================================================
+//                                        james Waichoka-Geo-Environmental Analyst and Planner
+
+//                                                  
+// Code: LULC For Burundi - Provinces
+// Written by: James Waichoka-Geo-Environmental Planner and Analyst
+// Objective:  LULC for Burundi PADANE SNV Project
+
+//=====================================================================================================================
+
+/////////////////////////////////////////////////////////////////////////////////////
+//step 1: We can choose the specific province that we want to carry out our analysis:
+////////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////
+////Enter the province name here:001. Gitega////////
+//////////////////////////////////////////////////
+
+// 1: Import the Feature Collection with all the provinces
+var provinces = ee.FeatureCollection("projects/ee-omayojames7/assets/Burundi_Admin_1_Provinces");
+
+// 2: Filter the Feature Collection by 'admin1Name'
+var ROI = provinces.filter(ee.Filter.eq('admin1Name', 'Gitega'));
+
+// 3: Add the selected province to the map
+Map.centerObject(ROI, 10);
+Map.addLayer(ROI,{}, 'Gitega Province');
+
+// 4: Print the selected province to the console
+print('selected province :', ROI);
+
+
+// Step 2: Make a cloud free composite Landsat 8
+var image = ee.Algorithms.Landsat.simpleComposite({
+  collection: l9raw.filterDate('2023-01-01','2024-02-28'),
+  asFloat: true
+});
+var trueColorVis = {min:0, max: 0.3, bands: ['B5','B4','B3']};
+Map.addLayer(image.clip(ROI), trueColorVis, 'composite');
+
+// step 3: create training GCP and specify the bands
+var label ="Class";
+var bands = ['B1', 'B2', 'B3', 'B4', 'B5', 'B7'];
+var input = image.select(bands);
+
+//1 = Forestland; 2= Shrubland; 3 = Grassland; 4 = Cropland; 5 = Wetland 6 = Waterbodies 7 = Built_up, 8 = Barren_land
+var training = Forestland.merge(Shrubland).merge(Grassland).merge(Cropland).merge(Wetland).merge(Waterbodies).merge(Built_up).merge(Barren_land);
+//step 4: Overlay the points on the Landsat image
+var trainImage = input.sampleRegions({
+  collection:training,
+  properties: [label],
+  scale:30
+});
+// print(trainImage);
+
+var trainingData = trainImage.randomColumn();
+var trainSet = trainingData.filter(ee.Filter.lessThan('random',0.8));
+var testSet = trainingData.filter(ee.Filter.greaterThanOrEquals('random',0.8));
+
+// step 5: Classification Model (CART)
+var classifier = ee.Classifier.smileCart().train(trainSet,label,bands);
+
+//step 6: Classify the Landsat image
+var classified = input.classify(classifier);
+
+//step 7: Define visualization parameters , you can use colour hunt
+var landcoverPalette = [
+  '#075e09',
+  '#C3B091',
+  '#7CFC00',
+  '#FF00E7',
+  '#483D8B',
+  '#1E90FF',
+  '#B22222',
+  '#DAA520'
+  ];
+Map.addLayer(classified.clip(ROI),{palette: landcoverPalette, min: 0, max: 8}, 'classification 2023');
+
+// step 8: Test the accuracy of the model to ascertain the results you got
+var test = classified.sampleRegions({
+  collection: training,
+  properties: [label],
+  scale: 10
+});
+print(test)
+
+var testconfusionMatrix = test.errorMatrix(label,'classification');
+print('Confusion Matrix', testconfusionMatrix);
+print('Test Accuracy',testconfusionMatrix.accuracy());
+
+// // // Export the image as a GEOTIF to Google Drive
+// Export.image.toDrive({
+//   image: classified,
+//   description: 'Gitega_Province_2023_LULC_MAP',
+//   scale: 30,
+//   region:geometry,
+//   fileFormat: 'GEOTIFF'
+// });
