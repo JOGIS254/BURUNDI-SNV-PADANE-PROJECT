@@ -1,0 +1,247 @@
+/*###############################################################################
+ ### By James Waichoka -AQM and GIS Practitioner ###
+ #############################################################################*/
+//Part 1: Image ingestion and Cleaning 
+Map.setOptions('HYBRID');
+// Step 1: Write the function to mask clouds and cirrus in Sentinel-2 images
+function maskS2clouds(image) {
+  var qa = image.select('QA60');
+
+// Step 2: Bits 10 and 11 are clouds and cirrus, respectively.
+  var cloudBitMask = 1 << 10;
+  var cirrusBitMask = 1 << 11;
+
+// Step 3: Both flags should be set to zero, indicating clear conditions.
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0)
+      .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+
+  return image.updateMask(mask).divide(10000);
+}
+
+// Step 4: Load Sentinel-2 harmonized data and apply the cloud mask function
+var unsupervised_input = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')
+                .filterBounds(studysite)
+                .filterDate("2019-06-06", "2019-07-31")
+                .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+                .map(maskS2clouds)
+                .median()
+                .clip(studysite);
+
+// Step 5: Set map display to center on the study site
+Map.centerObject(studysite, 10);
+
+// Step 6: Display the input image as a CIR composite with better visualization parameters
+Map.addLayer(unsupervised_input, {bands: ['B5', 'B4', 'B3'], min: 0, max: 0.3}, 'unsupervised_input_image');
+
+//Part 2:
+// Step 1: Sample the image to construct a training sample of pixels to characterize the image.
+var training = unsupervised_input.sample({
+  region: studysite,
+  scale: 10,
+  numPixels: 5000
+});
+
+// Step 2: Use wekaKMeans for classification
+var clusterer = ee.Clusterer.wekaKMeans(4).train(training);
+
+// Step 3: Results
+var results = unsupervised_input.cluster(clusterer);
+print(results);
+
+// Step 4: Display the classified image with random colors for each class
+Map.addLayer(results.randomVisualizer(), {}, 'unsupervised_classified_image', false);
+
+// Part 3:
+// /*############# Supervised classification ##########################*/
+
+//Step 1: Define the input image collection for supervised classification
+var input = ee.ImageCollection('COPERNICUS/S2_HARMONIZED')
+                .filterBounds(studysite)
+                .filterDate("2019-06-06", "2019-07-31")
+                .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+                .map(maskS2clouds);
+
+//Step 2: Select the first image; the scene with the least clouds in the sorted collection
+var supervised_input_image = ee.Image(input.first()).clip(studysite);
+
+//Step 3: Set the display to the center on the study area
+Map.centerObject(studysite, 10);
+
+//Step 4: Calculate the min and max values for visualization
+var visParams = {
+  bands: ['B5', 'B4', 'B3']
+};
+
+//Step 5: Get the min and max values dynamically
+var minMax = supervised_input_image.reduceRegion({
+  reducer: ee.Reducer.minMax(),
+  geometry: studysite,
+  scale: 10,
+  bestEffort: true
+});
+
+minMax.evaluate(function(values) {
+  visParams.min = values.B4_min;
+  visParams.max = values.B4_max;
+
+//Step 6:  Display the input image as a color infrared composite
+  Map.addLayer(supervised_input_image, visParams, 'super_input_image', false);
+});
+/*Step 7:  Combine the manually trained data of the crops into a reference dataset */
+var crops_polygons = Sunflower.merge(Amaranth).merge(TreeTomatoes).merge(WhiteSorghum);
+print(crops_polygons);
+
+/* Step 8:  Use the crop polygons data to sample the classified image and create a new band called landcover
+that contains the corresponding value for each reference point based on the classified image. */
+var trainingPixels = supervised_input_image.sampleRegions({
+  collection: crops_polygons,
+  properties: ['landcover'],
+  scale: 10
+});
+
+// Step 9:  Select the bands for training
+var bands = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7'];
+
+//Step 10:  Splits data into training and validation groups. Set at 70% training/30% validation
+var splitData = function(data) {
+  var dict = {};
+  var randomTpixels = data.randomColumn(); 
+  var trainingData = randomTpixels.filter(ee.Filter.lt('random', 0.7));
+  var valiData = randomTpixels.filter(ee.Filter.gte('random', 0.7));
+  
+  dict.training = trainingData;
+  dict.validation = valiData;
+  
+  return dict;
+};
+
+var cropdata = splitData(trainingPixels);
+
+var cropclassifiedTD = ee.Classifier.smileRandomForest(100).train(cropdata.training, "landcover", bands);
+
+//Step 11: Creates error matrix
+var createMatrix = function(data) {
+  var trainAccuracy = data.errorMatrix("landcover", "classification");
+  print('RF Resubstitution error matrix: ', trainAccuracy);
+  print('RF Training overall accuracy: ', trainAccuracy.accuracy());
+};
+
+var cropvalidation = cropdata.validation.classify(cropclassifiedTD); // Classifies the validation data
+
+createMatrix(cropvalidation); // Print the error matrix
+
+var classified = supervised_input_image.classify(cropclassifiedTD);
+
+var palette = [
+  'ffdd00', // Sunflower (0) // yellow
+  'ff00ff', // Amaranth (1) // magenta
+  '800080', // Tree Tomatoes (2) // purple
+  'ffffff'  // White Sorghum (3) // white
+];
+
+Map.addLayer(classified,
+            {palette: palette, min: 0, max: 3}, // min and max indicate that there will be 4 classes colored
+            "RFsupervised_classified_field", false); // Add the classification to the map with the four classes being colored according to ABcolours
+
+//Step 12: Export the image, specifying scale and region.
+Export.image.toDrive({
+  image: classified,
+  description: 'westk_supervised_classification',
+  scale: 30,
+  region: studysite
+});
+
+//Step 13: Export the image, specifying scale and region.
+Export.image.toDrive({
+  image: supervised_input_image,
+  description: 'input_image',
+  scale: 30,
+  region: studysite,
+  maxPixels: 1e13
+});
+
+//Part 4:
+// #############################################################################
+// ### Class Area calculation ###  this is important for understanding the range of the crops--for
+//intensity purposes
+// #############################################################################
+var classArea = function(classified) {
+  var areaImage = ee.Image.pixelArea().addBands(classified);
+   
+  var areas = areaImage.reduceRegion({ 
+    reducer: ee.Reducer.sum().group({
+      groupField: 1,
+      groupName: 'classification',
+    }),
+    geometry: classified.geometry(),
+    scale: 30, 
+    maxPixels: 1e8
+  }); 
+  
+  var classAreas = ee.List(areas.get('groups'));
+   
+  var classAreaLists = classAreas.map(function(item) { // Function within a function to create a dictionary with the values for every group
+    var areaDict = ee.Dictionary(item);
+    var classNumber = ee.Number(areaDict.get('classification')).format();
+    var area = ee.Number(areaDict.get('sum')).divide(1e6).round(); // The result will be in square meters, this converts them into square kilometers
+    return ee.List([classNumber, area]);
+  });
+   
+  var result = ee.Dictionary(classAreaLists.flatten()); // Flattens said dictionary so it is readable for us
+  return(result);
+};
+// Values in kms for the area of each class:
+print('validated:', classArea(classified));
+
+// Creating a chart of the classes
+var create_chart = function(classification, AOI, classList) { // for classList, create a list of your classes as strings
+  var options = {
+    hAxis: {title: 'Class'},
+    vAxis: {title: 'Area'},
+    title: 'Area by class',
+    series: { // You can change these to be whatever colors you'd like. Simply add numbers to match how many classes you have
+      0: {color: 'yellow'},
+      1: {color: 'magenta'},
+      2: {color: 'purple'},
+      3: {color: 'white'}
+    }
+  }; 
+  var areaChart = ui.Chart.image.byClass({
+    image: ee.Image.pixelArea().addBands(classification),
+    classBand: 'classification', 
+    scale: 30,
+    region: AOI,
+    reducer: ee.Reducer.sum()
+  }).setSeriesNames(classList)
+  .setOptions(options);
+  
+  print(areaChart);
+};
+
+/*################# CART Classification ##################*/
+
+// Train a CART classifier with default parameters.
+var cart_trained = ee.Classifier.smileCart().train(cropdata.training, "landcover", bands);
+
+// Classify the image with the same bands used for training.
+var cart_classified = supervised_input_image.select(bands).classify(cart_trained);
+
+print('Cart_classified_image', cart_classified);
+
+// Creates error matrix
+var createMatrix2 = function(data) {
+  var trainAccuracy = data.errorMatrix("landcover", "classification");
+  print('cart Resubstitution error matrix: ', trainAccuracy);
+  print('cart Training overall accuracy: ', trainAccuracy.accuracy());
+};
+
+var cropvalidation2 = cropdata.validation.classify(cart_trained); // Classifies the validation data
+
+createMatrix2(cropvalidation2); // Print the error matrix
+
+Map.addLayer(cart_classified,
+            {palette: palette, min: 0, max: 3}, // min and max indicate that there will be 4 classes colored
+            "CARTsupervised_classified_field", false); // Add the classification to the map with the four classes being colored according to ABcolours
+
+create_chart(cart_classified, studysite, ["Sunflower", "Amaranth", "Tree Tomatoes", "White Sorghum"]); // Creates chart
+create_chart(classified, studysite, ["Sunflower", "Amaranth", "Tree Tomatoes", "White Sorghum"]); // Creates chart
