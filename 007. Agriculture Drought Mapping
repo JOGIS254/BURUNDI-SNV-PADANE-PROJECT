@@ -1,0 +1,1112 @@
+// //*************************************************************************************/////                                                  
+// // Code: Drought Monitoring For Burundi - communes/////////////////////////////////////////
+// // Written by: James Waichoka-Geo-Environmental Planner and Analyst///////////////////////
+// // Objective:  Drought Monitoring for Burundi PADANE SNV Project 2024////////////////////
+// //=====================================================================================================================
+
+// //////////////////////////////////////////////////////////////////////////////////////
+// // We can choose the specific province that we want to carry out our analysis:///////
+// ////////////////////////////////////////////////////////////////////////////////////
+
+// ////////////////////////////////
+// ////Province:001. Bubanza//////
+// //////////////////////////////
+// // Load the study area boundary
+// // var geometry = ee.FeatureCollection('projects/ee-omayojames7/assets/Bubanza_communes');
+
+// // Map.centerObject(geometry, 10);
+// // Map.addLayer(geometry, {}, 'Bubanza Communes');
+
+// // Set map style
+// Map.setOptions('HYBRID');
+
+
+// // Center the ROI
+// Map.centerObject(geometry, 10);
+
+// // Define the time frame of the drought analysis
+// var time_start = '2001-01-01', time_end = '2024-12-31';
+
+// // Callout the images
+// var imageCollection = ee.ImageCollection('MODIS/061/MOD13A2'); // Uncommented for use
+// var imageCollection2 = ee.ImageCollection('MODIS/061/MOD11A2'); // Uncommented for use
+
+// // Select the NDVI band from the first image collection
+// var ndvi = imageCollection.select('NDVI')
+//   .filterDate(time_start, time_end);
+
+// // Select the LST band from the second image collection
+// var temp = imageCollection2.select('LST_Day_1km')
+//   .filterDate(time_start, time_end);
+
+// // Get the maximum and minimum value for NDVI
+// var ndvi_min = ndvi.min().multiply(0.0001);
+// var ndvi_max = ndvi.max().multiply(0.0001);
+
+// // Temporal function to convert data into monthly format
+// function temporal_collection(collection, start, count, interval, unit) {
+//   var seq = ee.List.sequence(0, ee.Number(count).subtract(1));
+//   var origin_date = ee.Date(start);
+//   return ee.ImageCollection(seq.map(function (i) {
+//     var start_date = origin_date.advance(ee.Number(interval).multiply(i), unit);
+//     var end_date = origin_date.advance(ee.Number(interval).multiply(ee.Number(i).add(1)), unit);
+//     return collection.filterDate(start_date, end_date).mean()
+//       .set('system:time_start', start_date.millis())
+//       .set('system:time_end', end_date.millis());
+//   }));
+// }
+
+// // Monthly NDVI image collection
+// var ndvi_monthly = temporal_collection(ndvi, time_start, 276, 1, 'month');
+
+// // VCI calculation
+// var vci = ndvi_monthly.map(function (img) {
+//   var index = img.expression('(ndvi - min) / (max - min)', {
+//     'ndvi': img.select('NDVI').multiply(0.0001),
+//     'min': ndvi_min,
+//     'max': ndvi_max
+//   });
+//   return index.rename('VCI')
+//     .copyProperties(img, img.propertyNames());
+// });
+
+// // Get the maximum and minimum value for LST
+// var temp_max = temp.max().multiply(0.02);
+// var temp_min = temp.min().multiply(0.02);
+
+// // Monthly LST image collection
+// var temp_monthly = temporal_collection(temp, time_start, 276, 1, 'month');
+
+// // TCI calculation
+// var tci = temp_monthly.map(function (img) {
+//   var index = img.expression('(max - lst) / (max - min)', {
+//     'max': temp_max,
+//     'min': temp_min,
+//     'lst': img.select('LST_Day_1km').multiply(0.02)
+//   });
+//   return index.rename('TCI')
+//     .copyProperties(img, img.propertyNames());
+// });
+
+// var modis_indices = vci.combine(tci);
+
+// // VHI calculation
+// var drought = modis_indices.map(function (img) {
+//   var vhi = img.expression('0.5 * vci + (1 - 0.5) * tci', {
+//     'vci': img.select('VCI'),
+//     'tci': img.select('TCI')
+//   }).rename('VHI');
+//   return img.addBands(vhi)
+//     .copyProperties(img, img.propertyNames());
+// });
+
+// print(
+//   ui.Chart.image.series(drought, geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+// );
+
+// print(
+//   ui.Chart.image.series(drought.select(['VCI', 'TCI']), geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+// );
+
+// print(
+//   ui.Chart.image.series(drought.select('VHI'), geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+// );
+
+// // Add the NDVI, VCI, TCI, and VHI images to the map
+// var specificDate = ee.Date('2023-01-01');
+
+// // Selecting the image from the collection closest to the specific date
+// var selectedImage = drought.filterDate(specificDate.advance(-15, 'day'), specificDate.advance(15, 'day')).first();
+
+// if (selectedImage) {
+//   // Adding the VHI image to the map
+//   Map.addLayer(selectedImage.clip(geometry), {bands: ['VHI'], min: 0, max: 1, palette: ['red', 'yellow', 'green']}, 'VHI Image');
+
+//   // Visualizing other indices (VCI and TCI) separately
+//   var vciImage = selectedImage.select('VCI');
+//   var tciImage = selectedImage.select('TCI');
+
+//   // Adding VCI image to the map
+//   Map.addLayer(vciImage.clip(geometry), {min: 0, max: 1, palette: ['brown', 'green']}, 'VCI Image');
+
+//   // Adding TCI image to the map
+//   Map.addLayer(tciImage.clip(geometry), {min: 0, max: 1, palette: ['blue', 'white']}, 'TCI Image');
+// } else {
+//   print('No image found for the specified date.');
+// }
+
+// // Export the images
+// // First Image: VHI for 2006-2011 and 2018 to 2023
+// Export.image.toDrive({
+//   image: drought.filterDate('2006-01-01', '2011-12-31').select('VHI').toBands(),
+//   description: 'Bubanza_modis_drought_vhi_2006-2011',
+//   scale: 100,
+//   crs: 'EPSG:4326',
+//   maxPixels: 1e13,
+//   region: geometry
+// });
+
+// Export.image.toDrive({
+//   image: drought.filterDate('2018-01-01', '2023-12-31').select('VHI').toBands(),
+//   description: 'Bubanza_modis_drought_vhi_2018-2023',
+//   scale: 100,
+//   crs: 'EPSG:4326',
+//   maxPixels: 1e13,
+//   region: geometry
+// });
+
+//**********************************************************************************************
+// //*************************************************************************************/////                                                  
+// // Code: Drought Monitoring For Burundi - communes/////////////////////////////////////////
+// // Written by: James Waichoka-Geo-Environmental Planner and Analyst///////////////////////
+// // Objective:  Drought Monitoring for Burundi PADANE SNV Project 2024////////////////////
+// //=====================================================================================================================
+
+// //////////////////////////////////////////////////////////////////////////////////////
+// // We can choose the specific province that we want to carry out our analysis:///////
+// ////////////////////////////////////////////////////////////////////////////////////
+
+// ////////////////////////////////////////
+// ////Province:002. Bujumbura Rural//////
+// //////////////////////////////////////
+
+// // Load the study area boundary
+// // var geometry = ee.FeatureCollection('projects/ee-omayojames7/assets/Bubanza_communes');
+
+// // Map.centerObject(geometry, 10);
+// // Map.addLayer(geometry, {}, 'Bubanza Communes');
+
+// // Set map style
+// Map.setOptions('HYBRID');
+
+
+// // Center the ROI
+// Map.centerObject(geometry, 10);
+
+// // Define the time frame of the drought analysis
+// var time_start = '2001-01-01', time_end = '2024-12-31';
+
+// // Callout the images
+// var imageCollection = ee.ImageCollection('MODIS/061/MOD13A2'); // Uncommented for use
+// var imageCollection2 = ee.ImageCollection('MODIS/061/MOD11A2'); // Uncommented for use
+
+// // Select the NDVI band from the first image collection
+// var ndvi = imageCollection.select('NDVI')
+//   .filterDate(time_start, time_end);
+
+// // Select the LST band from the second image collection
+// var temp = imageCollection2.select('LST_Day_1km')
+//   .filterDate(time_start, time_end);
+
+// // Get the maximum and minimum value for NDVI
+// var ndvi_min = ndvi.min().multiply(0.0001);
+// var ndvi_max = ndvi.max().multiply(0.0001);
+
+// // Temporal function to convert data into monthly format
+// function temporal_collection(collection, start, count, interval, unit) {
+//   var seq = ee.List.sequence(0, ee.Number(count).subtract(1));
+//   var origin_date = ee.Date(start);
+//   return ee.ImageCollection(seq.map(function (i) {
+//     var start_date = origin_date.advance(ee.Number(interval).multiply(i), unit);
+//     var end_date = origin_date.advance(ee.Number(interval).multiply(ee.Number(i).add(1)), unit);
+//     return collection.filterDate(start_date, end_date).mean()
+//       .set('system:time_start', start_date.millis())
+//       .set('system:time_end', end_date.millis());
+//   }));
+// }
+
+// // Monthly NDVI image collection
+// var ndvi_monthly = temporal_collection(ndvi, time_start, 276, 1, 'month');
+
+// // VCI calculation
+// var vci = ndvi_monthly.map(function (img) {
+//   var index = img.expression('(ndvi - min) / (max - min)', {
+//     'ndvi': img.select('NDVI').multiply(0.0001),
+//     'min': ndvi_min,
+//     'max': ndvi_max
+//   });
+//   return index.rename('VCI')
+//     .copyProperties(img, img.propertyNames());
+// });
+
+// // Get the maximum and minimum value for LST
+// var temp_max = temp.max().multiply(0.02);
+// var temp_min = temp.min().multiply(0.02);
+
+// // Monthly LST image collection
+// var temp_monthly = temporal_collection(temp, time_start, 276, 1, 'month');
+
+// // TCI calculation
+// var tci = temp_monthly.map(function (img) {
+//   var index = img.expression('(max - lst) / (max - min)', {
+//     'max': temp_max,
+//     'min': temp_min,
+//     'lst': img.select('LST_Day_1km').multiply(0.02)
+//   });
+//   return index.rename('TCI')
+//     .copyProperties(img, img.propertyNames());
+// });
+
+// var modis_indices = vci.combine(tci);
+
+// // VHI calculation
+// var drought = modis_indices.map(function (img) {
+//   var vhi = img.expression('0.5 * vci + (1 - 0.5) * tci', {
+//     'vci': img.select('VCI'),
+//     'tci': img.select('TCI')
+//   }).rename('VHI');
+//   return img.addBands(vhi)
+//     .copyProperties(img, img.propertyNames());
+// });
+
+// print(
+//   ui.Chart.image.series(drought, geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+// );
+
+// print(
+//   ui.Chart.image.series(drought.select(['VCI', 'TCI']), geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+// );
+
+// print(
+//   ui.Chart.image.series(drought.select('VHI'), geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+// );
+
+// // Add the NDVI, VCI, TCI, and VHI images to the map
+// var specificDate = ee.Date('2023-12-01');
+
+// // Selecting the image from the collection closest to the specific date
+// var selectedImage = drought.filterDate(specificDate.advance(-15, 'day'), specificDate.advance(15, 'day')).first();
+
+// if (selectedImage) {
+//   // Adding the VHI image to the map
+//   Map.addLayer(selectedImage.clip(geometry), {bands: ['VHI'], min: 0, max: 1, palette: ['red', 'yellow', 'green']}, 'VHI Image');
+
+//   // Visualizing other indices (VCI and TCI) separately
+//   var vciImage = selectedImage.select('VCI');
+//   var tciImage = selectedImage.select('TCI');
+
+//   // Adding VCI image to the map
+//   Map.addLayer(vciImage.clip(geometry), {min: 0, max: 1, palette: ['brown', 'green']}, 'VCI Image');
+
+//   // Adding TCI image to the map
+//   Map.addLayer(tciImage.clip(geometry), {min: 0, max: 1, palette: ['blue', 'white']}, 'TCI Image');
+// } else {
+//   print('No image found for the specified date.');
+// }
+
+// // Export the images
+// // First Image: VHI for 2006-2011 and 2018 to 2023
+// Export.image.toDrive({
+//   image: drought.filterDate('2006-01-01', '2011-12-31').select('VHI').toBands(),
+//   description: 'Bujumbura_modis_drought_vhi_2006-2011',
+//   scale: 100,
+//   crs: 'EPSG:4326',
+//   maxPixels: 1e13,
+//   region: geometry
+// });
+
+// Export.image.toDrive({
+//   image: drought.filterDate('2018-01-01', '2023-12-31').select('VHI').toBands(),
+//   description: 'Bujumbura_modis_drought_vhi_2018-2023',
+//   scale: 100,
+//   crs: 'EPSG:4326',
+//   maxPixels: 1e13,
+//   region: geometry
+// });
+  
+
+//*************************************************************************
+// //*************************************************************************************/////                                                  
+// // Code: Drought Monitoring For Burundi - communes/////////////////////////////////////////
+// // Written by: James Waichoka-Geo-Environmental Planner and Analyst///////////////////////
+// // Objective:  Drought Monitoring for Burundi PADANE SNV Project 2024////////////////////
+// //=====================================================================================================================
+
+// //////////////////////////////////////////////////////////////////////////////////////
+// // We can choose the specific province that we want to carry out our analysis:///////
+// ////////////////////////////////////////////////////////////////////////////////////
+
+// ////////////////////////////////////////
+// ////Province:003. Cibitoke//////
+// //////////////////////////////////////
+
+// // Load the study area boundary
+// // var geometry = ee.FeatureCollection('projects/ee-omayojames7/assets/Bubanza_communes');
+
+// // Map.centerObject(geometry, 10);
+// // Map.addLayer(geometry, {}, 'Bubanza Communes');
+
+// // Set map style
+// Map.setOptions('HYBRID');
+
+
+// // Center the ROI
+// Map.centerObject(geometry, 10);
+
+// // Define the time frame of the drought analysis
+// var time_start = '2001-01-01', time_end = '2024-12-31';
+
+// // Callout the images
+// var imageCollection = ee.ImageCollection('MODIS/061/MOD13A2'); // Uncommented for use
+// var imageCollection2 = ee.ImageCollection('MODIS/061/MOD11A2'); // Uncommented for use
+
+// // Select the NDVI band from the first image collection
+// var ndvi = imageCollection.select('NDVI')
+//   .filterDate(time_start, time_end);
+
+// // Select the LST band from the second image collection
+// var temp = imageCollection2.select('LST_Day_1km')
+//   .filterDate(time_start, time_end);
+
+// // Get the maximum and minimum value for NDVI
+// var ndvi_min = ndvi.min().multiply(0.0001);
+// var ndvi_max = ndvi.max().multiply(0.0001);
+
+// // Temporal function to convert data into monthly format
+// function temporal_collection(collection, start, count, interval, unit) {
+//   var seq = ee.List.sequence(0, ee.Number(count).subtract(1));
+//   var origin_date = ee.Date(start);
+//   return ee.ImageCollection(seq.map(function (i) {
+//     var start_date = origin_date.advance(ee.Number(interval).multiply(i), unit);
+//     var end_date = origin_date.advance(ee.Number(interval).multiply(ee.Number(i).add(1)), unit);
+//     return collection.filterDate(start_date, end_date).mean()
+//       .set('system:time_start', start_date.millis())
+//       .set('system:time_end', end_date.millis());
+//   }));
+// }
+
+// // Monthly NDVI image collection
+// var ndvi_monthly = temporal_collection(ndvi, time_start, 276, 1, 'month');
+
+// // VCI calculation
+// var vci = ndvi_monthly.map(function (img) {
+//   var index = img.expression('(ndvi - min) / (max - min)', {
+//     'ndvi': img.select('NDVI').multiply(0.0001),
+//     'min': ndvi_min,
+//     'max': ndvi_max
+//   });
+//   return index.rename('VCI')
+//     .copyProperties(img, img.propertyNames());
+// });
+
+// // Get the maximum and minimum value for LST
+// var temp_max = temp.max().multiply(0.02);
+// var temp_min = temp.min().multiply(0.02);
+
+// // Monthly LST image collection
+// var temp_monthly = temporal_collection(temp, time_start, 276, 1, 'month');
+
+// // TCI calculation
+// var tci = temp_monthly.map(function (img) {
+//   var index = img.expression('(max - lst) / (max - min)', {
+//     'max': temp_max,
+//     'min': temp_min,
+//     'lst': img.select('LST_Day_1km').multiply(0.02)
+//   });
+//   return index.rename('TCI')
+//     .copyProperties(img, img.propertyNames());
+// });
+
+// var modis_indices = vci.combine(tci);
+
+// // VHI calculation
+// var drought = modis_indices.map(function (img) {
+//   var vhi = img.expression('0.5 * vci + (1 - 0.5) * tci', {
+//     'vci': img.select('VCI'),
+//     'tci': img.select('TCI')
+//   }).rename('VHI');
+//   return img.addBands(vhi)
+//     .copyProperties(img, img.propertyNames());
+// });
+
+// print(
+//   ui.Chart.image.series(drought, geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+// );
+
+// print(
+//   ui.Chart.image.series(drought.select(['VCI', 'TCI']), geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+// );
+
+// print(
+//   ui.Chart.image.series(drought.select('VHI'), geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+// );
+
+// // Add the NDVI, VCI, TCI, and VHI images to the map
+// var specificDate = ee.Date('2023-12-01');
+
+// // Selecting the image from the collection closest to the specific date
+// var selectedImage = drought.filterDate(specificDate.advance(-15, 'day'), specificDate.advance(15, 'day')).first();
+
+// if (selectedImage) {
+//   // Adding the VHI image to the map
+//   Map.addLayer(selectedImage.clip(geometry), {bands: ['VHI'], min: 0, max: 1, palette: ['red', 'yellow', 'green']}, 'VHI Image');
+
+//   // Visualizing other indices (VCI and TCI) separately
+//   var vciImage = selectedImage.select('VCI');
+//   var tciImage = selectedImage.select('TCI');
+
+//   // Adding VCI image to the map
+//   Map.addLayer(vciImage.clip(geometry), {min: 0, max: 1, palette: ['brown', 'green']}, 'VCI Image');
+
+//   // Adding TCI image to the map
+//   Map.addLayer(tciImage.clip(geometry), {min: 0, max: 1, palette: ['blue', 'white']}, 'TCI Image');
+// } else {
+//   print('No image found for the specified date.');
+// }
+
+// // Export the images
+// // First Image: VHI for 2006-2011 and 2018 to 2023
+// Export.image.toDrive({
+//   image: drought.filterDate('2006-01-01', '2011-12-31').select('VHI').toBands(),
+//   description: 'Cibitoke_modis_drought_vhi_2006-2011',
+//   scale: 100,
+//   crs: 'EPSG:4326',
+//   maxPixels: 1e13,
+//   region: geometry
+// });
+
+// Export.image.toDrive({
+//   image: drought.filterDate('2018-01-01', '2023-12-31').select('VHI').toBands(),
+//   description: 'Cibitoke_modis_drought_vhi_2018-2023',
+//   scale: 100,
+//   crs: 'EPSG:4326',
+//   maxPixels: 1e13,
+//   region: geometry
+// });
+  
+// //*************************************************************************************/////                                                  
+// // Code: Drought Monitoring For Burundi - communes/////////////////////////////////////////
+// // Written by: James Waichoka-Geo-Environmental Planner and Analyst///////////////////////
+// // Objective:  Drought Monitoring for Burundi PADANE SNV Project 2024////////////////////
+// //=====================================================================================================================
+
+// //////////////////////////////////////////////////////////////////////////////////////
+// // We can choose the specific province that we want to carry out our analysis:///////
+// ////////////////////////////////////////////////////////////////////////////////////
+
+// ////////////////////////////////////////
+// ////Province:004. Gitega//////
+// //////////////////////////////////////
+
+// // Load the study area boundary
+// // var geometry = ee.FeatureCollection('projects/ee-omayojames7/assets/Bubanza_communes');
+
+// // Map.centerObject(geometry, 10);
+// // Map.addLayer(geometry, {}, 'Bubanza Communes');
+
+// // Set map style
+// Map.setOptions('HYBRID');
+
+
+// // Center the ROI
+// Map.centerObject(geometry, 10);
+
+// // Define the time frame of the drought analysis
+// var time_start = '2001-01-01', time_end = '2024-12-31';
+
+// // Callout the images
+// //var imageCollection = ee.ImageCollection('MODIS/061/MOD13A2'); // Uncommented for use
+// //var imageCollection2 = ee.ImageCollection('MODIS/061/MOD11A2'); // Uncommented for use
+
+// // Select the NDVI band from the first image collection
+// var ndvi = imageCollection.select('NDVI')
+//   .filterDate(time_start, time_end);
+
+// // Select the LST band from the second image collection
+// var temp = imageCollection2.select('LST_Day_1km')
+//   .filterDate(time_start, time_end);
+
+// // Get the maximum and minimum value for NDVI
+// var ndvi_min = ndvi.min().multiply(0.0001);
+// var ndvi_max = ndvi.max().multiply(0.0001);
+
+// // Temporal function to convert data into monthly format
+// function temporal_collection(collection, start, count, interval, unit) {
+//   var seq = ee.List.sequence(0, ee.Number(count).subtract(1));
+//   var origin_date = ee.Date(start);
+//   return ee.ImageCollection(seq.map(function (i) {
+//     var start_date = origin_date.advance(ee.Number(interval).multiply(i), unit);
+//     var end_date = origin_date.advance(ee.Number(interval).multiply(ee.Number(i).add(1)), unit);
+//     return collection.filterDate(start_date, end_date).mean()
+//       .set('system:time_start', start_date.millis())
+//       .set('system:time_end', end_date.millis());
+//   }));
+// }
+
+// // Monthly NDVI image collection
+// var ndvi_monthly = temporal_collection(ndvi, time_start, 276, 1, 'month');
+
+// // VCI calculation
+// var vci = ndvi_monthly.map(function (img) {
+//   var index = img.expression('(ndvi - min) / (max - min)', {
+//     'ndvi': img.select('NDVI').multiply(0.0001),
+//     'min': ndvi_min,
+//     'max': ndvi_max
+//   });
+//   return index.rename('VCI')
+//     .copyProperties(img, img.propertyNames());
+// });
+
+// // Get the maximum and minimum value for LST
+// var temp_max = temp.max().multiply(0.02);
+// var temp_min = temp.min().multiply(0.02);
+
+// // Monthly LST image collection
+// var temp_monthly = temporal_collection(temp, time_start, 276, 1, 'month');
+
+// // TCI calculation
+// var tci = temp_monthly.map(function (img) {
+//   var index = img.expression('(max - lst) / (max - min)', {
+//     'max': temp_max,
+//     'min': temp_min,
+//     'lst': img.select('LST_Day_1km').multiply(0.02)
+//   });
+//   return index.rename('TCI')
+//     .copyProperties(img, img.propertyNames());
+// });
+
+// var modis_indices = vci.combine(tci);
+
+// // VHI calculation
+// var drought = modis_indices.map(function (img) {
+//   var vhi = img.expression('0.5 * vci + (1 - 0.5) * tci', {
+//     'vci': img.select('VCI'),
+//     'tci': img.select('TCI')
+//   }).rename('VHI');
+//   return img.addBands(vhi)
+//     .copyProperties(img, img.propertyNames());
+// });
+
+// print(
+//   ui.Chart.image.series(drought, geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+// );
+
+// print(
+//   ui.Chart.image.series(drought.select(['VCI', 'TCI']), geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+// );
+
+// print(
+//   ui.Chart.image.series(drought.select('VHI'), geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+// );
+
+// // Add the NDVI, VCI, TCI, and VHI images to the map
+// var specificDate = ee.Date('2003-12-01');
+
+// // Selecting the image from the collection closest to the specific date
+// var selectedImage = drought.filterDate(specificDate.advance(-15, 'day'), specificDate.advance(15, 'day')).first();
+
+// if (selectedImage) {
+//   // Adding the VHI image to the map
+//   Map.addLayer(selectedImage.clip(geometry), {bands: ['VHI'], min: 0, max: 1, palette: ['red', 'yellow', 'green']}, 'VHI Image');
+
+//   // Visualizing other indices (VCI and TCI) separately
+//   var vciImage = selectedImage.select('VCI');
+//   var tciImage = selectedImage.select('TCI');
+
+//   // Adding VCI image to the map
+//   Map.addLayer(vciImage.clip(geometry), {min: 0, max: 1, palette: ['brown', 'green']}, 'VCI Image');
+
+//   // Adding TCI image to the map
+//   Map.addLayer(tciImage.clip(geometry), {min: 0, max: 1, palette: ['blue', 'white']}, 'TCI Image');
+// } else {
+//   print('No image found for the specified date.');
+// }
+
+// // Export the images
+// // First Image: VHI for 2006-2011 and 2018 to 2023
+// Export.image.toDrive({
+//   image: drought.filterDate('2006-01-01', '2011-12-31').select('VHI').toBands(),
+//   description: 'Gitega_modis_drought_vhi_2006-2011',
+//   scale: 100,
+//   crs: 'EPSG:4326',
+//   maxPixels: 1e13,
+//   region: geometry
+// });
+
+// Export.image.toDrive({
+//   image: drought.filterDate('2018-01-01', '2023-12-31').select('VHI').toBands(),
+//   description: 'Gitega_modis_drought_vhi_2018-2023',
+//   scale: 100,
+//   crs: 'EPSG:4326',
+//   maxPixels: 1e13,
+//   region: geometry
+// });
+   
+// //*************************************************************************************/////                                                  
+// // Code: Drought Monitoring For Burundi - communes/////////////////////////////////////////
+// // Written by: James Waichoka-Geo-Environmental Planner and Analyst///////////////////////
+// // Objective:  Drought Monitoring for Burundi PADANE SNV Project 2024////////////////////
+// //=====================================================================================================================
+
+// //////////////////////////////////////////////////////////////////////////////////////
+// // We can choose the specific province that we want to carry out our analysis:///////
+// ////////////////////////////////////////////////////////////////////////////////////
+
+// ////////////////////////////////////////
+// ////Province:005. Makamba//////
+// //////////////////////////////////////
+
+// // Load the study area boundary
+// // var geometry = ee.FeatureCollection('projects/ee-omayojames7/assets/Bubanza_communes');
+
+// // Map.centerObject(geometry, 10);
+// // Map.addLayer(geometry, {}, 'Bubanza Communes');
+
+// // Set map style
+// Map.setOptions('HYBRID');
+
+
+// // Center the ROI
+// Map.centerObject(geometry, 10);
+
+// // Define the time frame of the drought analysis
+// var time_start = '2001-01-01', time_end = '2024-12-31';
+
+// // Callout the images
+// //var imageCollection = ee.ImageCollection('MODIS/061/MOD13A2'); // Uncommented for use
+// //var imageCollection2 = ee.ImageCollection('MODIS/061/MOD11A2'); // Uncommented for use
+
+// // Select the NDVI band from the first image collection
+// var ndvi = imageCollection.select('NDVI')
+//   .filterDate(time_start, time_end);
+
+// // Select the LST band from the second image collection
+// var temp = imageCollection2.select('LST_Day_1km')
+//   .filterDate(time_start, time_end);
+
+// // Get the maximum and minimum value for NDVI
+// var ndvi_min = ndvi.min().multiply(0.0001);
+// var ndvi_max = ndvi.max().multiply(0.0001);
+
+// // Temporal function to convert data into monthly format
+// function temporal_collection(collection, start, count, interval, unit) {
+//   var seq = ee.List.sequence(0, ee.Number(count).subtract(1));
+//   var origin_date = ee.Date(start);
+//   return ee.ImageCollection(seq.map(function (i) {
+//     var start_date = origin_date.advance(ee.Number(interval).multiply(i), unit);
+//     var end_date = origin_date.advance(ee.Number(interval).multiply(ee.Number(i).add(1)), unit);
+//     return collection.filterDate(start_date, end_date).mean()
+//       .set('system:time_start', start_date.millis())
+//       .set('system:time_end', end_date.millis());
+//   }));
+// }
+
+// // Monthly NDVI image collection
+// var ndvi_monthly = temporal_collection(ndvi, time_start, 276, 1, 'month');
+
+// // VCI calculation
+// var vci = ndvi_monthly.map(function (img) {
+//   var index = img.expression('(ndvi - min) / (max - min)', {
+//     'ndvi': img.select('NDVI').multiply(0.0001),
+//     'min': ndvi_min,
+//     'max': ndvi_max
+//   });
+//   return index.rename('VCI')
+//     .copyProperties(img, img.propertyNames());
+// });
+
+// // Get the maximum and minimum value for LST
+// var temp_max = temp.max().multiply(0.02);
+// var temp_min = temp.min().multiply(0.02);
+
+// // Monthly LST image collection
+// var temp_monthly = temporal_collection(temp, time_start, 276, 1, 'month');
+
+// // TCI calculation
+// var tci = temp_monthly.map(function (img) {
+//   var index = img.expression('(max - lst) / (max - min)', {
+//     'max': temp_max,
+//     'min': temp_min,
+//     'lst': img.select('LST_Day_1km').multiply(0.02)
+//   });
+//   return index.rename('TCI')
+//     .copyProperties(img, img.propertyNames());
+// });
+
+// var modis_indices = vci.combine(tci);
+
+// // VHI calculation
+// var drought = modis_indices.map(function (img) {
+//   var vhi = img.expression('0.5 * vci + (1 - 0.5) * tci', {
+//     'vci': img.select('VCI'),
+//     'tci': img.select('TCI')
+//   }).rename('VHI');
+//   return img.addBands(vhi)
+//     .copyProperties(img, img.propertyNames());
+// });
+
+// print(
+//   ui.Chart.image.series(drought, geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+// );
+
+// print(
+//   ui.Chart.image.series(drought.select(['VCI', 'TCI']), geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+// );
+
+// print(
+//   ui.Chart.image.series(drought.select('VHI'), geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+// );
+
+// // Add the NDVI, VCI, TCI, and VHI images to the map
+// var specificDate = ee.Date('2003-12-01');
+
+// // Selecting the image from the collection closest to the specific date
+// var selectedImage = drought.filterDate(specificDate.advance(-15, 'day'), specificDate.advance(15, 'day')).first();
+
+// if (selectedImage) {
+//   // Adding the VHI image to the map
+//   Map.addLayer(selectedImage.clip(geometry), {bands: ['VHI'], min: 0, max: 1, palette: ['red', 'yellow', 'green']}, 'VHI Image');
+
+//   // Visualizing other indices (VCI and TCI) separately
+//   var vciImage = selectedImage.select('VCI');
+//   var tciImage = selectedImage.select('TCI');
+
+//   // Adding VCI image to the map
+//   Map.addLayer(vciImage.clip(geometry), {min: 0, max: 1, palette: ['brown', 'green']}, 'VCI Image');
+
+//   // Adding TCI image to the map
+//   Map.addLayer(tciImage.clip(geometry), {min: 0, max: 1, palette: ['blue', 'white']}, 'TCI Image');
+// } else {
+//   print('No image found for the specified date.');
+// }
+
+// // Export the images
+// // First Image: VHI for 2006-2011 and 2018 to 2023
+// Export.image.toDrive({
+//   image: drought.filterDate('2006-01-01', '2011-12-31').select('VHI').toBands(),
+//   description: 'Makamba_modis_drought_vhi_2006-2011',
+//   scale: 100,
+//   crs: 'EPSG:4326',
+//   maxPixels: 1e13,
+//   region: geometry
+// });
+
+// Export.image.toDrive({
+//   image: drought.filterDate('2018-01-01', '2023-12-31').select('VHI').toBands(),
+//   description: 'Makamba_modis_drought_vhi_2018-2023',
+//   scale: 100,
+//   crs: 'EPSG:4326',
+//   maxPixels: 1e13,
+//   region: geometry
+// });
+
+// //*************************************************************************************/////                                                  
+// // Code: Drought Monitoring For Burundi - communes/////////////////////////////////////////
+// // Written by: James Waichoka-Geo-Environmental Planner and Analyst///////////////////////
+// // Objective:  Drought Monitoring for Burundi PADANE SNV Project 2024////////////////////
+// //=====================================================================================================================
+
+// //////////////////////////////////////////////////////////////////////////////////////
+// // We can choose the specific province that we want to carry out our analysis:///////
+// ////////////////////////////////////////////////////////////////////////////////////
+
+// ////////////////////////////////////////
+// ////Province:006. Muyinga//////
+// //////////////////////////////////////
+
+// // Load the study area boundary
+// // var geometry = ee.FeatureCollection('projects/ee-omayojames7/assets/Bubanza_communes');
+
+// // Map.centerObject(geometry, 10);
+// // Map.addLayer(geometry, {}, 'Bubanza Communes');
+
+// // Set map style
+// Map.setOptions('HYBRID');
+
+
+// // Center the ROI
+// Map.centerObject(geometry, 10);
+
+// // Define the time frame of the drought analysis
+// var time_start = '2001-01-01', time_end = '2024-12-31';
+
+// // Callout the images
+// //var imageCollection = ee.ImageCollection('MODIS/061/MOD13A2'); // Uncommented for use
+// //var imageCollection2 = ee.ImageCollection('MODIS/061/MOD11A2'); // Uncommented for use
+
+// // Select the NDVI band from the first image collection
+// var ndvi = imageCollection.select('NDVI')
+//   .filterDate(time_start, time_end);
+
+// // Select the LST band from the second image collection
+// var temp = imageCollection2.select('LST_Day_1km')
+//   .filterDate(time_start, time_end);
+
+// // Get the maximum and minimum value for NDVI
+// var ndvi_min = ndvi.min().multiply(0.0001);
+// var ndvi_max = ndvi.max().multiply(0.0001);
+
+// // Temporal function to convert data into monthly format
+// function temporal_collection(collection, start, count, interval, unit) {
+//   var seq = ee.List.sequence(0, ee.Number(count).subtract(1));
+//   var origin_date = ee.Date(start);
+//   return ee.ImageCollection(seq.map(function (i) {
+//     var start_date = origin_date.advance(ee.Number(interval).multiply(i), unit);
+//     var end_date = origin_date.advance(ee.Number(interval).multiply(ee.Number(i).add(1)), unit);
+//     return collection.filterDate(start_date, end_date).mean()
+//       .set('system:time_start', start_date.millis())
+//       .set('system:time_end', end_date.millis());
+//   }));
+// }
+
+// // Monthly NDVI image collection
+// var ndvi_monthly = temporal_collection(ndvi, time_start, 276, 1, 'month');
+
+// // VCI calculation
+// var vci = ndvi_monthly.map(function (img) {
+//   var index = img.expression('(ndvi - min) / (max - min)', {
+//     'ndvi': img.select('NDVI').multiply(0.0001),
+//     'min': ndvi_min,
+//     'max': ndvi_max
+//   });
+//   return index.rename('VCI')
+//     .copyProperties(img, img.propertyNames());
+// });
+
+// // Get the maximum and minimum value for LST
+// var temp_max = temp.max().multiply(0.02);
+// var temp_min = temp.min().multiply(0.02);
+
+// // Monthly LST image collection
+// var temp_monthly = temporal_collection(temp, time_start, 276, 1, 'month');
+
+// // TCI calculation
+// var tci = temp_monthly.map(function (img) {
+//   var index = img.expression('(max - lst) / (max - min)', {
+//     'max': temp_max,
+//     'min': temp_min,
+//     'lst': img.select('LST_Day_1km').multiply(0.02)
+//   });
+//   return index.rename('TCI')
+//     .copyProperties(img, img.propertyNames());
+// });
+
+// var modis_indices = vci.combine(tci);
+
+// // VHI calculation
+// var drought = modis_indices.map(function (img) {
+//   var vhi = img.expression('0.5 * vci + (1 - 0.5) * tci', {
+//     'vci': img.select('VCI'),
+//     'tci': img.select('TCI')
+//   }).rename('VHI');
+//   return img.addBands(vhi)
+//     .copyProperties(img, img.propertyNames());
+// });
+
+// print(
+//   ui.Chart.image.series(drought, geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+// );
+
+// print(
+//   ui.Chart.image.series(drought.select(['VCI', 'TCI']), geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+// );
+
+// print(
+//   ui.Chart.image.series(drought.select('VHI'), geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+// );
+
+// // Add the NDVI, VCI, TCI, and VHI images to the map
+// var specificDate = ee.Date('2003-12-01');
+
+// // Selecting the image from the collection closest to the specific date
+// var selectedImage = drought.filterDate(specificDate.advance(-15, 'day'), specificDate.advance(15, 'day')).first();
+
+// if (selectedImage) {
+//   // Adding the VHI image to the map
+//   Map.addLayer(selectedImage.clip(geometry), {bands: ['VHI'], min: 0, max: 1, palette: ['red', 'yellow', 'green']}, 'VHI Image');
+
+//   // Visualizing other indices (VCI and TCI) separately
+//   var vciImage = selectedImage.select('VCI');
+//   var tciImage = selectedImage.select('TCI');
+
+//   // Adding VCI image to the map
+//   Map.addLayer(vciImage.clip(geometry), {min: 0, max: 1, palette: ['brown', 'green']}, 'VCI Image');
+
+//   // Adding TCI image to the map
+//   Map.addLayer(tciImage.clip(geometry), {min: 0, max: 1, palette: ['blue', 'white']}, 'TCI Image');
+// } else {
+//   print('No image found for the specified date.');
+// }
+
+// // Export the images
+// // First Image: VHI for 2006-2011 and 2018 to 2023
+// Export.image.toDrive({
+//   image: drought.filterDate('2006-01-01', '2011-12-31').select('VHI').toBands(),
+//   description: 'Muyinga_modis_drought_vhi_2006-2011',
+//   scale: 100,
+//   crs: 'EPSG:4326',
+//   maxPixels: 1e13,
+//   region: geometry
+// });
+
+// Export.image.toDrive({
+//   image: drought.filterDate('2018-01-01', '2023-12-31').select('VHI').toBands(),
+//   description: 'Muyinga_modis_drought_vhi_2018-2023',
+//   scale: 100,
+//   crs: 'EPSG:4326',
+//   maxPixels: 1e13,
+//   region: geometry
+// });
+
+//*************************************************************************************/////                                                  
+// Code: Drought Monitoring For Burundi - communes/////////////////////////////////////////
+// Written by: James Waichoka-Geo-Environmental Planner and Analyst///////////////////////
+// Objective:  Drought Monitoring for Burundi PADANE SNV Project 2024////////////////////
+//=====================================================================================================================
+
+//////////////////////////////////////////////////////////////////////////////////////
+// We can choose the specific province that we want to carry out our analysis:///////
+////////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////
+////Province:006. Muyinga//////
+//////////////////////////////////////
+
+// Load the study area boundary
+// var geometry = ee.FeatureCollection('projects/ee-omayojames7/assets/Bubanza_communes');
+
+// Map.centerObject(geometry, 10);
+// Map.addLayer(geometry, {}, 'Bubanza Communes');
+
+// Set map style
+Map.setOptions('HYBRID');
+
+
+// Center the ROI
+Map.centerObject(geometry, 10);
+
+// Define the time frame of the drought analysis
+var time_start = '2001-01-01', time_end = '2024-12-31';
+
+// Callout the images
+//var imageCollection = ee.ImageCollection('MODIS/061/MOD13A2'); // Uncommented for use
+//var imageCollection2 = ee.ImageCollection('MODIS/061/MOD11A2'); // Uncommented for use
+
+// Select the NDVI band from the first image collection
+var ndvi = imageCollection.select('NDVI')
+  .filterDate(time_start, time_end);
+
+// Select the LST band from the second image collection
+var temp = imageCollection2.select('LST_Day_1km')
+  .filterDate(time_start, time_end);
+
+// Get the maximum and minimum value for NDVI
+var ndvi_min = ndvi.min().multiply(0.0001);
+var ndvi_max = ndvi.max().multiply(0.0001);
+
+// Temporal function to convert data into monthly format
+function temporal_collection(collection, start, count, interval, unit) {
+  var seq = ee.List.sequence(0, ee.Number(count).subtract(1));
+  var origin_date = ee.Date(start);
+  return ee.ImageCollection(seq.map(function (i) {
+    var start_date = origin_date.advance(ee.Number(interval).multiply(i), unit);
+    var end_date = origin_date.advance(ee.Number(interval).multiply(ee.Number(i).add(1)), unit);
+    return collection.filterDate(start_date, end_date).mean()
+      .set('system:time_start', start_date.millis())
+      .set('system:time_end', end_date.millis());
+  }));
+}
+
+// Monthly NDVI image collection
+var ndvi_monthly = temporal_collection(ndvi, time_start, 276, 1, 'month');
+
+// VCI calculation
+var vci = ndvi_monthly.map(function (img) {
+  var index = img.expression('(ndvi - min) / (max - min)', {
+    'ndvi': img.select('NDVI').multiply(0.0001),
+    'min': ndvi_min,
+    'max': ndvi_max
+  });
+  return index.rename('VCI')
+    .copyProperties(img, img.propertyNames());
+});
+
+// Get the maximum and minimum value for LST
+var temp_max = temp.max().multiply(0.02);
+var temp_min = temp.min().multiply(0.02);
+
+// Monthly LST image collection
+var temp_monthly = temporal_collection(temp, time_start, 276, 1, 'month');
+
+// TCI calculation
+var tci = temp_monthly.map(function (img) {
+  var index = img.expression('(max - lst) / (max - min)', {
+    'max': temp_max,
+    'min': temp_min,
+    'lst': img.select('LST_Day_1km').multiply(0.02)
+  });
+  return index.rename('TCI')
+    .copyProperties(img, img.propertyNames());
+});
+
+var modis_indices = vci.combine(tci);
+
+// VHI calculation
+var drought = modis_indices.map(function (img) {
+  var vhi = img.expression('0.5 * vci + (1 - 0.5) * tci', {
+    'vci': img.select('VCI'),
+    'tci': img.select('TCI')
+  }).rename('VHI');
+  return img.addBands(vhi)
+    .copyProperties(img, img.propertyNames());
+});
+
+print(
+  ui.Chart.image.series(drought, geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+);
+
+print(
+  ui.Chart.image.series(drought.select(['VCI', 'TCI']), geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+);
+
+print(
+  ui.Chart.image.series(drought.select('VHI'), geometry, ee.Reducer.mean(), 1000, 'system:time_start')
+);
+
+// Add the NDVI, VCI, TCI, and VHI images to the map
+var specificDate = ee.Date('2003-12-01');
+
+// Selecting the image from the collection closest to the specific date
+var selectedImage = drought.filterDate(specificDate.advance(-15, 'day'), specificDate.advance(15, 'day')).first();
+
+if (selectedImage) {
+  // Adding the VHI image to the map
+  Map.addLayer(selectedImage.clip(geometry), {bands: ['VHI'], min: 0, max: 1, palette: ['red', 'yellow', 'green']}, 'VHI Image');
+
+  // Visualizing other indices (VCI and TCI) separately
+  var vciImage = selectedImage.select('VCI');
+  var tciImage = selectedImage.select('TCI');
+
+  // Adding VCI image to the map
+  Map.addLayer(vciImage.clip(geometry), {min: 0, max: 1, palette: ['brown', 'green']}, 'VCI Image');
+
+  // Adding TCI image to the map
+  Map.addLayer(tciImage.clip(geometry), {min: 0, max: 1, palette: ['blue', 'white']}, 'TCI Image');
+} else {
+  print('No image found for the specified date.');
+}
+
+// Export the images
+// First Image: VHI for 2006-2011 and 2018 to 2023
+Export.image.toDrive({
+  image: drought.filterDate('2006-01-01', '2011-12-31').select('VHI').toBands(),
+  description: 'Rumonge_modis_drought_vhi_2006-2011',
+  scale: 100,
+  crs: 'EPSG:4326',
+  maxPixels: 1e13,
+  region: geometry
+});
+
+Export.image.toDrive({
+  image: drought.filterDate('2018-01-01', '2023-12-31').select('VHI').toBands(),
+  description: 'Rumonge_modis_drought_vhi_2018-2023',
+  scale: 100,
+  crs: 'EPSG:4326',
+  maxPixels: 1e13,
+  region: geometry
+});
+   
+  
+  
+  
+  
